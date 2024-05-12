@@ -1,11 +1,11 @@
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
 from rest_framework import viewsets
-from rest_framework import status
+from django.shortcuts import get_object_or_404
 from django.core.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated
 
-from posts.models import Post, Group, Comment
+from posts.models import Post, Group
 from .serializers import PostSerializer, GroupSerializer, CommentSerializer
+from .permissions import AuthorOrReadOnly
 
 
 class PostViewSet(viewsets.ModelViewSet):
@@ -31,36 +31,18 @@ class GroupViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = GroupSerializer
 
 
-@api_view(['GET', 'POST'])
-def api_comment(request, post_id):
-    if request.method == 'GET':
-        comments = Comment.objects.filter(post=post_id)
-        serializer = CommentSerializer(comments, many=True)
-        return Response(serializer.data)
-    serializer = CommentSerializer(data=request.data)
-    if serializer.is_valid():
-        serializer.save(author=request.user, post_id=post_id)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class CommentViewSet(viewsets.ModelViewSet):
+    serializer_class = CommentSerializer
+    permission_classes = (AuthorOrReadOnly, IsAuthenticated)
 
+    def get_queryset(self):
+        post_id = self.kwargs.get('post_id')
+        post = get_object_or_404(Post, pk=post_id)
+        new_queryset = post.comments.all()
+        return new_queryset
 
-@api_view(['GET', 'PUT', 'PATCH', 'DELETE'])
-def api_comment_detail(request, post_id, comment_id):
-    comment = Comment.objects.get(id=comment_id, post=post_id)
-    if comment.author != request.user:
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    if request.method == 'PUT' or request.method == 'PATCH':
-        serializer = CommentSerializer(
-            comment, data=request.data, partial=True
-        )
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    elif request.method == 'DELETE':
-        comment.delete()
-        comments = Comment.objects.filter(post=post_id)
-        serializer = CommentSerializer(comments, many=True)
-        return Response(serializer.data)
-    serializer = CommentSerializer(comment)
-    return Response(serializer.data)
+    def perform_create(self, serializer):
+        post_id = self.kwargs.get('post_id')
+        author = self.request.user
+        post = get_object_or_404(Post, pk=post_id)
+        serializer.save(author=author, post=post)
